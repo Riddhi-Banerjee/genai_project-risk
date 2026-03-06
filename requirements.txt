@@ -1,5 +1,4 @@
 streamlit
-crewai>=0.100.0
-langchain-google-genai
+crewai>=0.80.0
+litellm>=1.40.0
 pandas
-litellm
