@@ -5,66 +5,88 @@ from crewai import Agent, Task, Crew, Process
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.tools import tool
 
-# --- 1. SETUP ---
+# --- 1. UI SETUP ---
 st.set_page_config(page_title="Risk Intelligence Command", layout="wide")
+st.title("🛡️ Agentic Risk Intelligence Engine")
 
-# Secure API Key retrieval
-api_key = st.secrets.get("GOOGLE_API_KEY") or st.sidebar.text_input("Enter Gemini API Key", type="password")
+# --- 2. API KEY HANDLING ---
+# Priority 1: Streamlit Secrets | Priority 2: Sidebar Input
+api_key = st.secrets.get("GOOGLE_API_KEY") or st.sidebar.text_input("Gemini API Key", type="password")
 
-if api_key:
-    os.environ["GOOGLE_API_KEY"] = api_key
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2)
+if not api_key:
+    st.warning("🔑 Please provide a Google API Key to activate the intelligence agents.")
+    st.stop()
 
-    # --- 2. TOOLS (The Agent's "Hands") ---
-    @tool("csv_search_tool")
-    def csv_search_tool(query: str):
-        """Use this tool to search for project or financial data in local CSV files."""
-        # This function helps agents decide which file to read based on your query
-        if "market" in query.lower():
-            return pd.read_csv('market_trends.csv').tail(10).to_string()
-        elif "transaction" in query.lower() or "payment" in query.lower():
-            return pd.read_csv('transaction.csv').head(20).to_string()
-        else:
-            return pd.read_csv('project_risk_raw_dataset.csv').head(20).to_string()
+os.environ["GOOGLE_API_KEY"] = api_key
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.1)
 
-    # --- 3. AGENTS (The "Brains") ---
-    # Based on your requirement: Market Analyst, Risk Scorer, and Project Manager
-    market_agent = Agent(
-        role='Market Analyst',
-        goal='Identify economic risks from market_trends.csv',
-        backstory='Expert in macroeconomics and industry trends.',
-        tools=[csv_search_tool],
-        llm=llm
+# --- 3. THE AGENT TOOLS ---
+@tool("read_csv_tool")
+def read_csv_tool(file_name: str):
+    """Reads a CSV file and returns the data as a string. 
+    Available files: 'project_risk_raw_dataset.csv', 'transaction.csv', 'market_trends.csv'"""
+    try:
+        df = pd.read_csv(file_name)
+        return df.to_string()
+    except Exception as e:
+        return f"Error reading file {file_name}: {e}"
+
+# --- 4. AGENT DEFINITIONS ---
+market_agent = Agent(
+    role='Market Analysis Agent',
+    goal='Identify external economic risks from market_trends.csv',
+    backstory='You are a financial economist who monitors inflation and market volatility.',
+    tools=[read_csv_tool],
+    llm=llm,
+    verbose=True
+)
+
+scoring_agent = Agent(
+    role='Risk Scoring Agent',
+    goal='Identify financial risks and overdue payments from transaction.csv',
+    backstory='You are a forensic auditor focusing on budget utilization and payment delays.',
+    tools=[read_csv_tool],
+    llm=llm,
+    verbose=True
+)
+
+status_tracker = Agent(
+    role='Project Status Tracking Agent',
+    goal='Monitor project health and schedule delays from project_risk_raw_dataset.csv',
+    backstory='You are a senior project auditor who finds complexity and resource risks.',
+    tools=[read_csv_tool],
+    llm=llm,
+    verbose=True
+)
+
+manager = Agent(
+    role='Project Risk Manager',
+    goal='Synthesize all agent reports into a final executive mitigation strategy.',
+    backstory='You are the Chief Risk Officer. You turn technical data into business strategy.',
+    llm=llm,
+    verbose=True
+)
+
+# --- 5. EXECUTION ---
+target_project = st.text_input("Enter Project ID (e.g., PROJ_0001):", "PROJ_0001")
+
+if st.button("🚀 Run Agentic Audit"):
+    # Define Tasks
+    t1 = Task(description=f"Analyze market context for {target_project}", agent=market_agent, expected_output="Economic risk summary.")
+    t2 = Task(description=f"Analyze transaction history for {target_project}", agent=scoring_agent, expected_output="Financial risk report.")
+    t3 = Task(description=f"Review status for {target_project}", agent=status_tracker, expected_output="Internal health report.")
+    t4 = Task(description="Create a 3-step mitigation strategy using all findings.", agent=manager, expected_output="Executive Risk Strategy.")
+
+    # Form the Crew
+    risk_crew = Crew(
+        agents=[market_agent, scoring_agent, status_tracker, manager],
+        tasks=[t1, t2, t3, t4],
+        process=Process.sequential
     )
 
-    finance_agent = Agent(
-        role='Risk Scorer',
-        goal='Analyze transaction.csv for overdue payments.',
-        backstory='Financial auditor with a focus on project budget health.',
-        tools=[csv_search_tool],
-        llm=llm
-    )
-
-    manager = Agent(
-        role='Project Risk Manager',
-        goal='Synthesize reports into a final strategy.',
-        backstory='Chief Risk Officer who provides the final executive summary.',
-        llm=llm
-    )
-
-    # --- 4. UI ---
-    st.title("🛡️ Agentic Risk Command")
-    target = st.text_input("Project ID:", "PROJ_0001")
-
-    if st.button("🚀 Start Agentic Audit"):
-        t1 = Task(description=f"Analyze market for {target}", agent=market_agent, expected_output="Economic summary.")
-        t2 = Task(description=f"Analyze finances for {target}", agent=finance_agent, expected_output="Financial report.")
-        t3 = Task(description="Combine all findings into one strategy.", agent=manager, expected_output="Executive Report.")
-
-        crew = Crew(agents=[market_agent, finance_agent, manager], tasks=[t1, t2, t3], verbose=True)
-        
-        with st.status("Agents are collaborating...", expanded=True):
-            result = crew.kickoff()
-            st.markdown(result.raw)
-else:
-    st.warning("Please provide an API Key to continue.")
+    with st.status("Agents are collaborating...", expanded=True) as status:
+        result = risk_crew.kickoff()
+        status.update(label="Analysis Complete", state="complete")
+    
+    st.markdown("### 📊 Final Intelligence Report")
+    st.markdown(result.raw)
