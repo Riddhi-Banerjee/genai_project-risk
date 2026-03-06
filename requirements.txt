@@ -1,7 +1,6 @@
 streamlit
-crewai
+crewai==0.28.8
 langchain-google-genai
 pandas
-langchain-experimental
-python-dotenv
+pydantic<2.0.0
 langchain
