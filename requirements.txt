@@ -2,3 +2,4 @@ streamlit
 crewai>=0.100.0
 langchain-google-genai
 pandas
+litellm
