@@ -1,94 +1,91 @@
 import streamlit as st
 import pandas as pd
 import os
-from crewai import Agent, Task, Crew, Process, LLM # Added LLM here
+from crewai import Agent, Task, Crew, Process, LLM
 from crewai.tools import BaseTool
-from pydantic import Field
 
-# --- 1. CONFIG & UI ---
-st.set_page_config(page_title="Risk Intelligence Command", layout="wide")
+# --- 1. UI SETUP ---
+st.set_page_config(page_title="Risk Intelligence Engine", layout="wide")
 st.title("🛡️ Agentic Risk Intelligence Engine")
 
-# --- 2. AUTHENTICATION ---
+# --- 2. API KEY & ENVIRONMENT ---
 api_key = st.secrets.get("GOOGLE_API_KEY") or st.sidebar.text_input("Enter Gemini API Key", type="password")
 
 if not api_key:
-    st.warning("🔑 Please provide a Google API Key.")
+    st.warning("🔑 Please provide a Google API Key to start.")
     st.stop()
 
-# Force-set the keys for all underlying libraries
-os.environ["GEMINI_API_KEY"] = api_key
+# Force set the environment variable for LiteLLM
 os.environ["GOOGLE_API_KEY"] = api_key
 
-# --- 3. MODEL CONFIGURATION (The Critical Part) ---
-# We define a dedicated LLM object. 
-# This bypasses the default string-to-API mapping that is causing your 404.
-gemini_llm = LLM(
-    model="gemini/gemini-1.5-flash", 
+# --- 3. THE FIX: STABLE LLM CONFIGURATION ---
+# Using 'google/gemini-1.5-flash' forces the use of the stable Google AI Studio API
+# instead of the buggy Vertex v1beta path.
+stable_llm = LLM(
+    model="google/gemini-1.5-flash",
     api_key=api_key,
-    temperature=0.7
+    temperature=0.2
 )
 
-# --- 4. CUSTOM DATA TOOL ---
+# --- 4. TOOL DEFINITION ---
 class RiskDataTool(BaseTool):
     name: str = "Risk Data Reader"
-    description: str = "Reads project, financial, or market data from local CSV files."
+    description: str = "Reads data from market_trends.csv or transaction.csv."
 
     def _run(self, file_name: str) -> str:
         try:
-            # Files must be in the same root directory as app.py
             df = pd.read_csv(file_name)
-            return df.head(25).to_string() # Head(25) to save tokens
+            return df.head(20).to_string()
         except Exception as e:
-            return f"Error reading {file_name}: {e}"
+            return f"Error: {e}"
 
 csv_tool = RiskDataTool()
 
-# --- 5. AGENT DEFINITIONS ---
+# --- 5. AGENTS ---
 market_agent = Agent(
-    role='Market Analysis Agent',
-    goal='Identify external economic risks from market_trends.csv',
-    backstory='Expert economist monitoring inflation.',
+    role='Market Analyst',
+    goal='Find risks in market_trends.csv',
+    backstory='Expert in global macroeconomics.',
     tools=[csv_tool],
-    llm=gemini_llm, # Using the LLM object here
+    llm=stable_llm, # Linked to the fixed LLM object
     verbose=True
 )
 
 scoring_agent = Agent(
-    role='Risk Scoring Agent',
-    goal='Identify financial risks and overdue payments from transaction.csv',
-    backstory='Forensic auditor focusing on budget health.',
+    role='Financial Auditor',
+    goal='Find risks in transaction.csv',
+    backstory='Specialist in corporate finance.',
     tools=[csv_tool],
-    llm=gemini_llm, # Using the LLM object here
+    llm=stable_llm,
     verbose=True
 )
 
 manager = Agent(
-    role='Project Risk Manager',
-    goal='Synthesize reports into a final executive strategy.',
+    role='Risk Manager',
+    goal='Summarize findings into a plan.',
     backstory='Chief Risk Officer.',
-    llm=gemini_llm, # Using the LLM object here
+    llm=stable_llm,
     verbose=True
 )
 
-# --- 6. WORKFLOW ---
-target_project = st.text_input("Enter Project ID:", "PROJ_0001")
+# --- 6. EXECUTION ---
+target_project = st.text_input("Project ID:", "PROJ_0001")
 
-if st.button("🚀 Run Agentic Audit"):
-    t1 = Task(description=f"Analyze market context for {target_project}", agent=market_agent, expected_output="Market risk summary.")
-    t2 = Task(description=f"Analyze financial history for {target_project}", agent=scoring_agent, expected_output="Financial report.")
-    t3 = Task(description="Combine reports into a mitigation strategy.", agent=manager, expected_output="Final Strategy.")
+if st.button("🚀 Run Analysis"):
+    t1 = Task(description=f"Analyze market for {target_project}", agent=market_agent, expected_output="Market Report")
+    t2 = Task(description=f"Analyze finance for {target_project}", agent=scoring_agent, expected_output="Finance Report")
+    t3 = Task(description="Create mitigation plan", agent=manager, expected_output="Final Strategy")
 
-    risk_crew = Crew(
+    crew = Crew(
         agents=[market_agent, scoring_agent, manager],
         tasks=[t1, t2, t3],
         process=Process.sequential
     )
 
-    with st.status("Agents are collaborating...", expanded=True) as status:
+    with st.status("Agents working...", expanded=True) as status:
         try:
-            result = risk_crew.kickoff()
-            status.update(label="Analysis Complete", state="complete")
+            result = crew.kickoff()
+            status.update(label="Complete!", state="complete")
             st.markdown(result.raw)
         except Exception as e:
-            st.error(f"Execution Error: {e}")
+            st.error(f"Error: {e}")
